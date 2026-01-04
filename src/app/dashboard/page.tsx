@@ -32,6 +32,19 @@ const initialHistory = [
 export default function DashboardPage() {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [dashboardHistory, setDashboardHistory] = useState(initialHistory);
+
+    // Sync dashboardHistory with localStorage
+    useEffect(() => {
+        const saved = localStorage.getItem('prepBuddy_interviewHistory');
+        if (saved) {
+            try {
+                setDashboardHistory(JSON.parse(saved));
+            } catch (e) {
+                console.error("Error loading dashboard history", e);
+            }
+        }
+    }, []);
+
     const [chartData, setChartData] = useState<Array<{ name: string, score: number }>>([]);
     const [totalInterviews, setTotalInterviews] = useState(0);
     const [avgScore, setAvgScore] = useState(0);

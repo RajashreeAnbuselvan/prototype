@@ -53,21 +53,21 @@ export const netflixQuestions: Question[] = [
     },
     {
         id: 3,
-        type: "Coding",
-        text: "Implement a function to handle real-time playback buffer management.",
-        hint: "Consider memory constraints and priority-based data prefetching."
+        type: "General",
+        text: "If you were to greenlight a new original series for the APAC market, which data points would you prioritize vs. your own creative intuition?",
+        hint: "Balance algorithmic demand with the 'Judgment' rubric of long-term thinking."
     },
     {
         id: 4,
-        type: "System Design",
-        text: "Design a recommendation engine that updates based on immediate user playback history.",
-        hint: "Discuss stream processing (Kafka/Flink) vs. batch processing."
+        type: "Behavioral",
+        text: "Tell me about a time you gave extremely direct, difficult feedback to a peer. How did you ensure it was radical candor and not just rudeness?",
+        hint: "Focus on the 'Radical Candor' rubric: care personally, challenge directly."
     },
     {
         id: 5,
-        type: "Behavioral",
-        text: "A critical service goes down during a major show premiere. You're the lead on call. What's your immediate communication and mitigation strategy?",
-        hint: "Transparency, incident response roles, and root cause analysis later."
+        type: "General",
+        text: "As a Content Strategist, how do you provide 'Context, Not Control' to the creative teams producing our shows?",
+        hint: "Discuss empowering partners with data and goals rather than micro-managing creative choices."
     }
 ];
 

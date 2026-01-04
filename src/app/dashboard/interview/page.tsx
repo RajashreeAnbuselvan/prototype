@@ -15,6 +15,7 @@ function InterviewContent() {
     const searchParams = useSearchParams();
     const company = searchParams.get("company") || "Google";
     const role = searchParams.get("role") || "Software Engineer (L3)";
+    const academicYear = searchParams.get("year") || "Junior (Year 3)";
 
     const [questions, setQuestions] = useState<Question[]>([]);
     const [currentStep, setCurrentStep] = useState(0);
@@ -28,12 +29,20 @@ function InterviewContent() {
     const [aiFeedback, setAiFeedback] = useState("");
     const [isAISpeaking, setIsAISpeaking] = useState(false);
     const [recognition, setRecognition] = useState<any>(null);
+    const recognitionRef = React.useRef<any>(null);
+    const isRecordingRef = React.useRef(isRecording);
+    const isStartedRef = React.useRef(false);
+
+    // Keep ref in sync with state for use in callbacks
+    useEffect(() => {
+        isRecordingRef.current = isRecording;
+    }, [isRecording]);
 
     useEffect(() => {
         setQuestions(getQuestions(company));
 
         // Initialize Speech Recognition
-        if (typeof window !== "undefined") {
+        if (typeof window !== "undefined" && !recognitionRef.current) {
             const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
             if (SpeechRecognition) {
                 const rec = new SpeechRecognition();
@@ -52,29 +61,77 @@ function InterviewContent() {
                     }
                 };
 
-                rec.onend = () => {
-                    if (isRecording) rec.start(); // Keep recording if supposed to be
+                rec.onstart = () => {
+                    isStartedRef.current = true;
                 };
 
+                rec.onend = () => {
+                    isStartedRef.current = false;
+                    // Auto-restart logic - ONLY if intent is still to record
+                    if (isRecordingRef.current && recognitionRef.current) {
+                        try {
+                            recognitionRef.current.start();
+                        } catch (e: any) {
+                            // Ignore "already started" errors
+                            if (e.name !== 'InvalidStateError') {
+                                console.error("Auto-restart error", e);
+                            }
+                        }
+                    }
+                };
+
+                rec.onerror = (event: any) => {
+                    console.error("Speech Recognition Error", event.error);
+                    if (event.error === 'not-allowed') {
+                        setIsRecording(false);
+                    }
+                    // onend will fire after onerror
+                };
+
+                recognitionRef.current = rec;
                 setRecognition(rec);
             }
         }
+
+        return () => {
+            if (recognitionRef.current) {
+                try {
+                    recognitionRef.current.abort(); // abort is better for immediate cleanup
+                } catch (e) { }
+                recognitionRef.current = null;
+                isStartedRef.current = false;
+            }
+        };
     }, [company]);
 
     // Manage recording state
     useEffect(() => {
-        if (!recognition) return;
+        const rec = recognitionRef.current;
+        if (!rec) return;
 
         if (isRecording) {
             setTranscript("");
             setAiFeedback("");
-            try {
-                recognition.start();
-            } catch (e) {
-                console.error("Recognition start error", e);
+            if (!isStartedRef.current) {
+                try {
+                    rec.start();
+                } catch (e: any) {
+                    if (e.name !== 'InvalidStateError') {
+                        console.error("Recognition start error", e);
+                    } else {
+                        isStartedRef.current = true; // Sync state if already started
+                    }
+                }
             }
         } else {
-            recognition.stop();
+            if (isStartedRef.current) {
+                try {
+                    rec.stop();
+                } catch (e) {
+                    console.error("Recognition stop error", e);
+                }
+                // isStartedRef will be set to false in onend
+            }
             if (transcript.length > 20) {
                 handleEvaluation();
             }
@@ -85,13 +142,55 @@ function InterviewContent() {
         setIsAnalyzing(true);
         // Simulate Gemini thinking/analysis
         setTimeout(() => {
-            const feedbacks = [
-                "That's a very solid approach. You clearly identified the trade-offs between latency and consistency. I'd suggest elaborating more on the failure modes in a distributed environment.",
-                "Excellent use of technical terminology. Your explanation of the MapReduce paradigm was intuitive. Try to keep the same energetic tone for the system design section.",
-                "Good response. You highlighted the importance of user-centric design. For Netflix, remember to focus on the 'Freedom and Responsibility' culture when discussing team conflicts.",
-                "Very methodical. The way you broke down the problem into smaller modules shows strong engineering discipline. Your voice tone remained professional throughout."
-            ];
-            const feedback = feedbacks[Math.floor(Math.random() * feedbacks.length)];
+            let feedback = "";
+            const isNetflix = company.toLowerCase() === "netflix";
+            const academicLevel = academicYear.toLowerCase();
+            const isFreshmanOrSophomore = academicLevel.includes("freshman") || academicLevel.includes("sophomore");
+            const isGraduate = academicLevel.includes("graduate");
+
+            if (isNetflix) {
+                const currentQuestionText = questions[currentStep].text.toLowerCase();
+                let rubricTitle = "";
+                let rubricText = "";
+
+                // Map questions to rubrics based on keywords
+                if (currentQuestionText.includes("data") || currentQuestionText.includes("intuition") || currentQuestionText.includes("judgment")) {
+                    rubricTitle = "Judgment";
+                    rubricText = isFreshmanOrSophomore
+                        ? "You're showing a great early understanding of how data informs creative decisions. Focus on explaining 'the why' behind your intuition to show long-term thinking."
+                        : isGraduate
+                            ? "A sophisticated balance of quantitative metrics and creative vision. Your ability to think 3-5 years ahead in content cycles perfectly matches our 'Judgment' standard."
+                            : "Strong data-informed logic. To level up, demonstrate how your intuition would challenge a data trend if the long-term strategic value was high.";
+                } else if (currentQuestionText.includes("feedback") || currentQuestionText.includes("candor")) {
+                    rubricTitle = "Radical Candor";
+                    rubricText = isFreshmanOrSophomore
+                        ? "Good start. At Netflix, we practice 'Radical Candor'—which means being direct because you care. Try to be even more specific with your feedback examples."
+                        : "Excellent application of 'Radical Candor'. You balanced personal care with direct challenge effectively, ensuring high stakes didn't lower your honesty.";
+                } else if (currentQuestionText.includes("context") || currentQuestionText.includes("control") || currentQuestionText.includes("strategy")) {
+                    rubricTitle = "Context, Not Control";
+                    rubricText = isGraduate
+                        ? "Masterful approach to strategic empowerment. You prioritize information flow over approval loops, which is exactly how we scale Content Strategy."
+                        : "You clearly grasped the concept of empowering others with context. Focus on what specific 'levers' or data you'd provide to creative partners.";
+                } else {
+                    rubricTitle = "High Performance";
+                    rubricText = "Your answer reflects a 'Dream Team' mentality—prioritizing excellence and team success over individual ego. This is core to our performance culture.";
+                }
+
+                feedback = `[Netflix Rubric: ${rubricTitle}] ${rubricText}`;
+
+                if (isFreshmanOrSophomore) {
+                    feedback += " This is a highly mature response for an early-career candidate.";
+                }
+            } else {
+                const feedbacks = [
+                    "That's a very solid approach. You clearly identified the trade-offs between latency and consistency. I'd suggest elaborating more on the failure modes in a distributed environment.",
+                    "Excellent use of technical terminology. Your explanation of the MapReduce paradigm was intuitive. Try to keep the same energetic tone for the system design section.",
+                    "Good response. You highlighted the importance of user-centric design. For the candidate level, this shows great maturity.",
+                    "Very methodical. The way you broke down the problem into smaller modules shows strong engineering discipline. Your voice tone remained professional throughout."
+                ];
+                feedback = feedbacks[Math.floor(Math.random() * feedbacks.length)];
+            }
+
             setAiFeedback(feedback);
             setIsAnalyzing(false);
             speakFeedback(feedback);
@@ -128,6 +227,30 @@ function InterviewContent() {
             if (typeof window !== "undefined") window.speechSynthesis.cancel();
         } else {
             setCompleted(true);
+            // Save to persistent history
+            if (typeof window !== "undefined") {
+                const newHistoryItem = {
+                    id: Date.now(),
+                    company,
+                    role,
+                    date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                    status: "Completed",
+                    score: 94, // Using the same score from the summary for consistency
+                    type: company === "Netflix" && role.includes("Content Strategy") ? "Behavioral" : "Technical"
+                };
+
+                const saved = localStorage.getItem('prepBuddy_interviewHistory');
+                let history = [];
+                if (saved) {
+                    try {
+                        history = JSON.parse(saved);
+                    } catch (e) {
+                        console.error("Error parsing history", e);
+                    }
+                }
+                history.unshift(newHistoryItem);
+                localStorage.setItem('prepBuddy_interviewHistory', JSON.stringify(history));
+            }
         }
     };
 

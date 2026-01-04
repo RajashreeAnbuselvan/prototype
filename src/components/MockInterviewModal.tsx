@@ -16,6 +16,7 @@ interface MockInterviewModalProps {
 export const MockInterviewModal = ({ isOpen, onOpenChange }: MockInterviewModalProps) => {
     const [company, setCompany] = React.useState("Google");
     const [role, setRole] = React.useState("Software Engineer (L3)");
+    const [year, setYear] = React.useState("Junior (Year 3)");
 
     return (
         <Dialog open={isOpen} onOpenChange={onOpenChange}>
@@ -57,13 +58,29 @@ export const MockInterviewModal = ({ isOpen, onOpenChange }: MockInterviewModalP
                             />
                         </div>
 
+                        <div className="space-y-2">
+                            <Label htmlFor="year" className="text-sm font-medium">What year of study are you in?</Label>
+                            <select
+                                id="year"
+                                className="w-full h-11 px-3 rounded-md border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-google-blue/20 transition-all font-medium"
+                                value={year}
+                                onChange={(e) => setYear(e.target.value)}
+                            >
+                                <option>Freshman (Year 1)</option>
+                                <option>Sophomore (Year 2)</option>
+                                <option>Junior (Year 3)</option>
+                                <option>Senior (Year 4)</option>
+                                <option>Graduate Student</option>
+                            </select>
+                        </div>
+
                         <div className="space-y-3">
                             <p className="text-xs font-semibold text-slate-500 uppercase flex items-center space-x-1">
                                 <History className="w-3 h-3" />
                                 <span>Quick Select</span>
                             </p>
                             <div className="flex flex-wrap gap-2">
-                                {["Software Engineer (L3)", "Product Manager", "Frontend Developer", "Backend Engineer"].map((r) => (
+                                {["Software Engineer (L3)", "Content Strategy", "Product Manager", "Frontend Developer"].map((r) => (
                                     <Button
                                         key={r}
                                         variant="outline"
@@ -86,7 +103,7 @@ export const MockInterviewModal = ({ isOpen, onOpenChange }: MockInterviewModalP
                     <div className="flex space-x-2 w-full sm:w-auto">
                         <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
                         <Button className="bg-google-blue hover:bg-google-blue/90 text-white px-8" asChild>
-                            <Link href={`/dashboard/interview?company=${encodeURIComponent(company)}&role=${encodeURIComponent(role)}`}>Start Interview</Link>
+                            <Link href={`/dashboard/interview?company=${encodeURIComponent(company)}&role=${encodeURIComponent(role)}&year=${encodeURIComponent(year)}`}>Start Interview</Link>
                         </Button>
                     </div>
                 </DialogFooter>

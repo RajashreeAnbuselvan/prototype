@@ -8,16 +8,36 @@ import { ChevronLeft, Filter, Download, MoreVertical, Search } from "lucide-reac
 import Link from "next/link";
 import { Input } from "@/components/ui/input";
 
-const detailedHistory = [
-    { id: 1, company: "Google", role: "Software Engineer", date: "Dec 28, 2025", status: "Completed", score: "92%", type: "Technical" },
-    { id: 2, company: "Amazon", role: "Product Manager", date: "Dec 20, 2025", status: "Completed", score: "85%", type: "Behavioral" },
-    { id: 3, company: "Meta", role: "Frontend Lead", date: "Dec 15, 2025", status: "In-Progress", score: "--", type: "System Design" },
-    { id: 4, company: "Netflix", role: "Backend Developer", date: "Dec 10, 2025", status: "Completed", score: "78%", type: "Technical" },
-    { id: 5, company: "Apple", role: "iOS Developer", date: "Dec 05, 2025", status: "Completed", score: "88%", type: "Technical" },
-    { id: 6, company: "Tesla", role: "Auto-pilot Engineer", date: "Nov 30, 2025", status: "Completed", score: "81%", type: "System Design" },
+const initialDetailedHistory = [
+    { id: 1, company: "Google", role: "Software Engineer", date: "Dec 28", status: "Completed", score: "92%", type: "Technical" },
+    { id: 2, company: "Amazon", role: "Product Manager", date: "Dec 20", status: "Completed", score: "85%", type: "Behavioral" },
+    { id: 3, company: "Meta", role: "Frontend Lead", date: "Dec 15", status: "In-Progress", score: "--", type: "System Design" },
+    { id: 4, company: "Netflix", role: "Backend Developer", date: "Dec 10", status: "Completed", score: "78%", type: "Technical" },
 ];
 
 export default function HistoryPage() {
+    const [history, setHistory] = React.useState<any[]>([]);
+
+    React.useEffect(() => {
+        const saved = localStorage.getItem('prepBuddy_interviewHistory');
+        if (saved) {
+            try {
+                const parsed = JSON.parse(saved);
+                // Convert score numbers to strings with % if needed
+                const formatted = parsed.map((item: any) => ({
+                    ...item,
+                    score: typeof item.score === 'number' ? `${item.score}%` : item.score
+                }));
+                setHistory(formatted);
+            } catch (e) {
+                console.error("Error loading history", e);
+                setHistory(initialDetailedHistory);
+            }
+        } else {
+            setHistory(initialDetailedHistory);
+        }
+    }, []);
+
     return (
         <div className="max-w-6xl mx-auto space-y-6">
             <div className="flex items-center justify-between">
@@ -61,7 +81,7 @@ export default function HistoryPage() {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                            {detailedHistory.map((item) => (
+                            {history.map((item) => (
                                 <tr key={item.id} className="hover:bg-slate-50/50 transition-colors group cursor-pointer">
                                     <td className="px-6 py-4">
                                         <div className="flex items-center space-x-3">
