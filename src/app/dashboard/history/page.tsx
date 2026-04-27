@@ -19,23 +19,54 @@ export default function HistoryPage() {
     const [history, setHistory] = React.useState<any[]>([]);
 
     React.useEffect(() => {
-        const saved = localStorage.getItem('prepBuddy_interviewHistory');
-        if (saved) {
+        async function fetchHistory() {
             try {
-                const parsed = JSON.parse(saved);
-                // Convert score numbers to strings with % if needed
-                const formatted = parsed.map((item: any) => ({
-                    ...item,
-                    score: typeof item.score === 'number' ? `${item.score}%` : item.score
-                }));
-                setHistory(formatted);
-            } catch (e) {
-                console.error("Error loading history", e);
-                setHistory(initialDetailedHistory);
+                const response = await fetch('/api/interviews');
+                if (!response.ok) throw new Error('Failed to fetch history');
+                const data = await response.json();
+
+                if (data && data.length > 0) {
+                    const formatted = data.map((item: any) => ({
+                        ...item,
+                        id: item._id, // Use MongoDB _id as id
+                        score: typeof item.score === 'number' ? `${item.score}%` : item.score
+                    }));
+                    setHistory(formatted);
+                } else {
+                    // Fallback to localStorage for existing items not yet in DB
+                    const saved = localStorage.getItem('prepBuddy_interviewHistory');
+                    if (saved) {
+                        const parsed = JSON.parse(saved);
+                        const formatted = parsed.map((item: any) => ({
+                            ...item,
+                            score: typeof item.score === 'number' ? `${item.score}%` : item.score
+                        }));
+                        setHistory(formatted);
+                    } else {
+                        setHistory(initialDetailedHistory);
+                    }
+                }
+            } catch (error) {
+                console.error("Error loading history from API", error);
+                // Fallback to localStorage on error
+                const saved = localStorage.getItem('prepBuddy_interviewHistory');
+                if (saved) {
+                    try {
+                        const parsed = JSON.parse(saved);
+                        const formatted = parsed.map((item: any) => ({
+                            ...item,
+                            score: typeof item.score === 'number' ? `${item.score}%` : item.score
+                        }));
+                        setHistory(formatted);
+                    } catch (e) {
+                        setHistory(initialDetailedHistory);
+                    }
+                } else {
+                    setHistory(initialDetailedHistory);
+                }
             }
-        } else {
-            setHistory(initialDetailedHistory);
         }
+        fetchHistory();
     }, []);
 
     return (

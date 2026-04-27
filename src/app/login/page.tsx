@@ -6,24 +6,49 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Chrome, Mail, Lock } from "lucide-react";
 import Link from "next/link";
+import { signIn } from "next-auth/react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 const LoginPage = () => {
   const [isLoading, setIsLoading] = React.useState(false);
-  const router = React.useMemo(() => {
-    if (typeof window !== "undefined") {
-      return (path: string) => {
-        setIsLoading(true);
-        setTimeout(() => {
-          window.location.href = path;
-        }, 1500); // Simulate network latency for high-fidelity feel
-      };
-    }
-    return () => { };
-  }, []);
+  const [error, setError] = React.useState("");
+  const [success, setSuccess] = React.useState("");
+  const router = useRouter();
+  const searchParams = useSearchParams();
 
-  const handleLogin = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    router("/dashboard");
+  React.useEffect(() => {
+    if (searchParams.get("registered")) {
+      setSuccess("Account created successfully! Please log in.");
+    }
+  }, [searchParams]);
+
+  const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setError("");
+    setSuccess("");
+
+    const formData = new FormData(e.currentTarget);
+    const email = formData.get("email") as string;
+    const password = formData.get("password") as string;
+
+    try {
+      const result = await signIn("credentials", {
+        email,
+        password,
+        redirect: false,
+      });
+
+      if (result?.error) {
+        setError("Invalid email or password");
+        setIsLoading(false);
+      } else {
+        router.push("/dashboard");
+      }
+    } catch (err: any) {
+      setError("An unexpected error occurred");
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -67,11 +92,23 @@ const LoginPage = () => {
             <p className="text-sm text-muted-foreground">Log in to your account to continue your journey.</p>
           </div>
 
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg text-sm">
+              {error}
+            </div>
+          )}
+
+          {success && (
+            <div className="bg-emerald-50 border border-emerald-200 text-emerald-600 px-4 py-3 rounded-lg text-sm">
+              {success}
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-4">
             <Button
               variant="outline"
               className="flex items-center justify-center space-x-2 h-11"
-              onClick={() => handleLogin()}
+              onClick={() => {}}
               disabled={isLoading}
             >
               <Chrome className="w-4 h-4" />
@@ -80,7 +117,7 @@ const LoginPage = () => {
             <Button
               variant="outline"
               className="flex items-center justify-center space-x-2 h-11"
-              onClick={() => handleLogin()}
+              onClick={() => {}}
               disabled={isLoading}
             >
               <svg className="w-4 h-4" viewBox="0 0 23 23" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -107,7 +144,7 @@ const LoginPage = () => {
               <label className="text-sm font-medium leading-none" htmlFor="email">Email</label>
               <div className="relative">
                 <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                <Input id="email" placeholder="name@company.com" type="email" className="pl-10 h-11" required />
+                <Input id="email" name="email" placeholder="name@company.com" type="email" className="pl-10 h-11" required />
               </div>
             </div>
             <div className="space-y-2">
@@ -117,7 +154,7 @@ const LoginPage = () => {
               </div>
               <div className="relative">
                 <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                <Input id="password" type="password" className="pl-10 h-11" required />
+                <Input id="password" name="password" type="password" placeholder="••••••••" className="pl-10 h-11" required />
               </div>
             </div>
             <Button
@@ -137,7 +174,7 @@ const LoginPage = () => {
           </form>
 
           <p className="text-center text-sm text-muted-foreground">
-            Don't have an account? <Link href="#" className="text-google-blue font-semibold hover:underline">Sign up</Link>
+            Don't have an account? <Link href="/register" className="text-google-blue font-semibold hover:underline">Sign up</Link>
           </p>
         </div>
       </div>

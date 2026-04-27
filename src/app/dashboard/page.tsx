@@ -5,10 +5,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardAction }
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Play, History, TrendingUp, ChevronRight, Info, Plus, LayoutDashboard, Search, Calendar, BookOpen, Clock, Sparkles } from "lucide-react";
+import { Play, History, TrendingUp, ChevronRight, Info, Plus, LayoutDashboard, Search, Calendar, BookOpen, Clock, Sparkles, Target, Zap, ShieldAlert, Check, ThumbsUp, ThumbsDown, Award, BarChart3 } from "lucide-react";
 import { MockInterviewModal } from "@/components/MockInterviewModal";
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip } from "recharts";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { isGeminiMockMode } from "@/lib/gemini";
 import {
     Dialog,
     DialogContent,
@@ -33,17 +34,118 @@ export default function DashboardPage() {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [dashboardHistory, setDashboardHistory] = useState(initialHistory);
 
-    // Sync dashboardHistory with localStorage
+    // Personalization state
+    const [targetCompany, setTargetCompany] = useState("Google");
+    const [targetRole, setTargetRole] = useState("Software Engineer");
+    const [targetLevel, setTargetLevel] = useState("L3 (Entry Level)");
+
+    // Readiness score state
+    const [readinessScore, setReadinessScore] = useState(72);
+    const [readinessBreakdown, setReadinessBreakdown] = useState({
+        technical: 68,
+        communication: 82,
+        confidence: 75,
+        speed: 64
+    });
+
+    // AI Insight state
+    const [weeklyInsight, setWeeklyInsight] = useState("Analyzing your performance data...");
+    const [isLoadingInsight, setIsLoadingInsight] = useState(false);
+
+    // Sync dashboardHistory with MongoDB/localStorage
     useEffect(() => {
-        const saved = localStorage.getItem('prepBuddy_interviewHistory');
-        if (saved) {
+        async function fetchHistory() {
             try {
-                setDashboardHistory(JSON.parse(saved));
-            } catch (e) {
-                console.error("Error loading dashboard history", e);
+                const response = await fetch('/api/interviews');
+                if (!response.ok) throw new Error('Failed to fetch history');
+                const data = await response.json();
+
+                if (data && data.length > 0) {
+                    setDashboardHistory(data);
+
+                    // Dynamically calculate readiness score based on last 5 interviews
+                    const completed = data.filter((i: any) => i.status === "Completed");
+                    if (completed.length > 0) {
+                        const avg = Math.round(completed.reduce((acc: number, curr: any) => acc + curr.score, 0) / completed.length);
+                        setReadinessScore(avg);
+
+                        // Mock breakdown update based on scores
+                        setReadinessBreakdown({
+                            technical: Math.min(100, avg - 5),
+                            communication: Math.min(100, avg + 8),
+                            confidence: Math.min(100, avg + 2),
+                            speed: Math.min(100, avg - 10)
+                        });
+                    }
+                } else {
+                    // Fallback to localStorage
+                    const saved = localStorage.getItem('prepBuddy_interviewHistory');
+                    if (saved) {
+                        try {
+                            const parsed = JSON.parse(saved);
+                            setDashboardHistory(parsed);
+                            if (parsed.length > 0) {
+                                const avg = Math.round(parsed.reduce((acc: number, curr: any) => acc + curr.score, 0) / parsed.length);
+                                setReadinessScore(avg || 72);
+                            }
+                        } catch (e) { }
+                    }
+                }
+            } catch (error) {
+                console.error("Error loading dashboard history from API", error);
             }
         }
+
+        async function getRealTimeInsight(history: any[]) {
+            if (!history || history.length === 0) return;
+            setIsLoadingInsight(true);
+            try {
+                const res = await fetch('/api/generate-insight', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ history }),
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.insight) setWeeklyInsight(data.insight);
+                }
+            } catch (e) {
+                console.error("Error fetching AI insight:", e);
+            } finally {
+                setIsLoadingInsight(false);
+            }
+        }
+
+        fetchHistory().then(() => {
+            // After history is fetched (and dashboardHistory state is set), get insight
+            // We use the local data from the fetchHistory closure if possible
+        });
     }, []);
+
+    // Secondary effect to trigger AI insight when history changes
+    useEffect(() => {
+        if (dashboardHistory.length > 0 && dashboardHistory !== initialHistory) {
+            const fetchInsight = async () => {
+                setIsLoadingInsight(true);
+                try {
+                    const res = await fetch('/api/generate-insight', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ history: dashboardHistory }),
+                    });
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data.insight) setWeeklyInsight(data.insight);
+                    }
+                } catch (e) {
+                    console.error("Error fetching AI insight:", e);
+                } finally {
+                    setIsLoadingInsight(false);
+                }
+            };
+            fetchInsight();
+        }
+    }, [dashboardHistory]);
 
     const [chartData, setChartData] = useState<Array<{ name: string, score: number }>>([]);
     const [totalInterviews, setTotalInterviews] = useState(0);
@@ -166,51 +268,172 @@ export default function DashboardPage() {
 
     return (
         <div className="space-y-8 animate-in fade-in duration-500">
-            <div className="flex items-center justify-between">
+            {/* Header */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
                 <div>
-                    <h1 className="text-2xl font-bold text-slate-900">Candidate Dashboard</h1>
-                    <p className="text-slate-500 text-sm">Welcome back! You're in the top 5% of candidates this week.</p>
+                    <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+                        Candidate Dashboard
+                        <Badge variant="outline" className="text-[10px] bg-blue-50 text-google-blue border-blue-100 uppercase font-black tracking-widest">AI COACH ACTIVE</Badge>
+                        {isGeminiMockMode() && (
+                            <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-600 border-amber-100 uppercase font-black tracking-widest animate-pulse">
+                                Mock Mode
+                            </Badge>
+                        )}
+                    </h1>
+                    <p className="text-slate-500 text-sm font-medium">Welcome back! Your interview readiness is trending up.</p>
                 </div>
-                <Button className="bg-google-blue hover:bg-google-blue/90 text-white font-medium" onClick={() => setIsModalOpen(true)}>
-                    <Plus className="w-4 h-4 mr-2" />
-                    New Interview
-                </Button>
+            </div>
+
+            {/* Top Metrics: Professional Vibrant Hero Section */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Global Readiness Score - High End Gradient */}
+                <Card className="lg:col-span-2 overflow-hidden border-none shadow-2xl bg-gradient-vibrant text-white relative group animate-glow">
+                    <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity duration-700 pointer-events-none" />
+                    <CardContent className="p-6">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-8">
+                            <div className="space-y-4">
+                                <div>
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <Award className="w-5 h-5 text-blue-200" />
+                                        <h3 className="text-lg font-bold text-blue-50">Predictive Readiness Score</h3>
+                                    </div>
+                                    <p className="text-blue-100/90 text-[10px] font-black uppercase tracking-widest">Global Readiness Quotient</p>
+                                </div>
+                                <div className="flex items-end gap-4">
+                                    <span className="text-7xl font-black tracking-tighter drop-shadow-lg">{readinessScore}%</span>
+                                    <div className="flex items-center text-emerald-400 text-sm font-black bg-white/20 backdrop-blur-md px-3 py-1 rounded-full mb-3 shadow-lg border border-white/10">
+                                        <TrendingUp className="size-4 mr-1.5" />
+                                        +5.2%
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-2">
+                                    <div className="space-y-1">
+                                        <div className="flex justify-between text-[10px] text-blue-100 font-bold uppercase">
+                                            <span>Technical</span>
+                                            <span>{readinessBreakdown.technical}%</span>
+                                        </div>
+                                        <div className="h-1.5 w-full bg-blue-900/30 rounded-full overflow-hidden">
+                                            <div className="h-full bg-white rounded-full" style={{ width: `${readinessBreakdown.technical}%` }} />
+                                        </div>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <div className="flex justify-between text-[10px] text-blue-100 font-bold uppercase">
+                                            <span>Communication</span>
+                                            <span>{readinessBreakdown.communication}%</span>
+                                        </div>
+                                        <div className="h-1.5 w-full bg-blue-900/30 rounded-full overflow-hidden">
+                                            <div className="h-full bg-white rounded-full" style={{ width: `${readinessBreakdown.communication}%` }} />
+                                        </div>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <div className="flex justify-between text-[10px] text-blue-100 font-bold uppercase">
+                                            <span>Confidence</span>
+                                            <span>{readinessBreakdown.confidence}%</span>
+                                        </div>
+                                        <div className="h-1.5 w-full bg-blue-900/30 rounded-full overflow-hidden">
+                                            <div className="h-full bg-white rounded-full" style={{ width: `${readinessBreakdown.confidence}%` }} />
+                                        </div>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <div className="flex justify-between text-[10px] text-blue-100 font-bold uppercase">
+                                            <span>Speed</span>
+                                            <span>{readinessBreakdown.speed}%</span>
+                                        </div>
+                                        <div className="h-1.5 w-full bg-blue-900/30 rounded-full overflow-hidden">
+                                            <div className="h-full bg-white rounded-full" style={{ width: `${readinessBreakdown.speed}%` }} />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="hidden md:flex flex-col items-center justify-center space-y-3 bg-white/10 p-6 rounded-3xl border border-white/20 backdrop-blur-xl shadow-2xl">
+                                <span className="text-[10px] font-black text-blue-100 uppercase tracking-widest">Peak Target</span>
+                                <div className="text-4xl font-black tracking-tighter">90%</div>
+                                <div className="text-[10px] text-center text-blue-200 font-bold max-w-[80px] leading-tight">Needed for {targetCompany}</div>
+                                <Button size="sm" className="bg-white text-google-blue hover:bg-white/90 text-xs h-8 px-6 font-black shadow-xl shadow-blue-900/40 mt-1" onClick={() => setIsModalOpen(true)}>
+                                    ACCELERATE
+                                </Button>
+                            </div>
+                        </div>
+                    </CardContent>
+                </Card>
+
+                {/* Weekly AI Insight - Premium Glass Card */}
+                <Card className="glass-card overflow-hidden border-none shadow-premium transition-all hover:-translate-y-1 duration-300 group">
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-bold flex items-center gap-2">
+                            <Sparkles className="w-4 h-4 text-google-blue animate-pulse" />
+                            Weekly AI Insight
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-5 flex flex-col justify-between h-full">
+                        <div className="p-5 bg-gradient-to-br from-blue-50/80 to-purple-50/80 rounded-2xl border border-blue-100/50 group-hover:bg-white transition-all shadow-inner min-h-[100px] flex items-center relative overflow-hidden">
+                            <div className="absolute -right-4 -bottom-4 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
+                                <Sparkles className="size-16 text-google-blue" />
+                            </div>
+                            {isLoadingInsight ? (
+                                <div className="w-full space-y-2 animate-pulse">
+                                    <div className="h-3 bg-slate-200 rounded-full w-full"></div>
+                                    <div className="h-3 bg-slate-200 rounded-full w-5/6"></div>
+                                    <div className="h-3 bg-slate-200 rounded-full w-4/6"></div>
+                                </div>
+                            ) : (
+                                <p className="text-xs leading-relaxed text-slate-700 font-bold italic z-10">
+                                    "{weeklyInsight}"
+                                </p>
+                            )}
+                        </div>
+                        <div className="space-y-3">
+                            <div className="flex items-center justify-between text-[11px]">
+                                <span className="text-slate-500 font-black uppercase tracking-tighter">Strategic Impact</span>
+                                <span className="text-google-blue font-black tracking-widest">85%</span>
+                            </div>
+                            <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden shadow-inner">
+                                <div className="h-full bg-gradient-to-r from-google-blue to-vibrant-purple rounded-full" style={{ width: '85%' }} />
+                            </div>
+                        </div>
+                    </CardContent>
+                </Card>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* Card 1: Mock Interview Action */}
-                <Card className="relative overflow-hidden group hover:border-google-blue/50 transition-all duration-300">
-                    <CardHeader>
-                        <CardTitle className="flex items-center space-x-2">
-                            <Play className="w-5 h-5 text-google-blue" />
-                            <span>Mock Interview</span>
+                {/* Card 1: Mock Interview - Action Hero */}
+                <Card className="overflow-hidden border-none shadow-premium glass-card group relative transition-all hover:-translate-y-1 duration-300">
+                    <CardHeader className="pb-3">
+                        <CardTitle className="flex items-center space-x-2 font-black text-slate-800">
+                            <div className="size-8 rounded-xl bg-blue-50 flex items-center justify-center">
+                                <Play className="size-4 text-google-blue fill-google-blue" />
+                            </div>
+                            <span className="uppercase tracking-widest text-xs">Dynamic Mock</span>
                         </CardTitle>
-                        <CardDescription>Practice with AI in real-time</CardDescription>
+                        <CardDescription className="font-bold text-[10px] text-slate-400">PRACTICE WITH LIVE AI</CardDescription>
                     </CardHeader>
-                    <CardContent className="space-y-4">
-                        <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 group-hover:bg-blue-50/50 transition-colors">
-                            <h4 className="text-sm font-semibold mb-1">Target Company: <span className="text-google-blue">Google</span></h4>
-                            <p className="text-xs text-slate-500">Focus: System Design & Algos</p>
+                    <CardContent className="space-y-6">
+                        <div className="p-4 bg-gradient-to-br from-slate-50 to-blue-50/30 rounded-2xl border border-slate-100 group-hover:bg-white transition-all shadow-inner">
+                            <h4 className="text-xs font-black mb-1">TARGET: <span className="text-google-blue">{targetCompany}</span></h4>
+                            <p className="text-[10px] text-slate-500 font-bold">Focus: System Design & Algorithms</p>
                         </div>
-                        <div className="flex items-center justify-between text-xs text-slate-400 font-medium">
-                            <span>Avg. Duration: 45m</span>
-                            <span>Difficulty: Hard</span>
+                        <div className="flex items-center justify-between text-[10px] text-slate-400 font-black tracking-widest uppercase">
+                            <span>45m Duration</span>
+                            <Badge className="bg-orange-50 text-orange-600 border-none text-[9px]">HARD</Badge>
                         </div>
-                        <Button className="w-full bg-google-blue hover:bg-google-blue/90 text-white" onClick={() => setIsModalOpen(true)}>
-                            Start Now
+                        <Button className="w-full bg-google-blue hover:bg-google-blue/90 text-white font-black tracking-widest shadow-lg shadow-blue-500/20 py-6 rounded-2xl" onClick={() => setIsModalOpen(true)}>
+                            LAUNCH SESSION
                         </Button>
                     </CardContent>
-                    <div className="absolute top-0 right-0 w-24 h-24 bg-google-blue/5 rounded-full -mr-8 -mt-8 group-hover:scale-110 transition-transform duration-500" />
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-google-blue/5 rounded-full -mr-8 -mt-8 group-hover:scale-125 transition-transform duration-700" />
                 </Card>
 
-                {/* Card 2: Interview History */}
-                <Card className="flex flex-col hover:border-google-blue/50 transition-all duration-300">
-                    <CardHeader>
-                        <CardTitle className="flex items-center space-x-2">
-                            <History className="w-5 h-5 text-slate-700" />
-                            <span>Interview History</span>
+                {/* Card 2: Interview History - Glass Layer */}
+                <Card className="flex flex-col border-none shadow-premium glass-card overflow-hidden transition-all hover:-translate-y-1 duration-300">
+                    <CardHeader className="pb-3 border-b border-slate-100/50">
+                        <CardTitle className="flex items-center space-x-2 font-black text-slate-800">
+                            <div className="size-8 rounded-xl bg-purple-50 flex items-center justify-center">
+                                <History className="size-4 text-vibrant-purple" />
+                            </div>
+                            <span className="uppercase tracking-widest text-xs">Performance log</span>
                         </CardTitle>
-                        <CardDescription>Recent performance and feedback</CardDescription>
+                        <CardDescription className="font-bold text-[10px] text-slate-400">RECENT ANALYTICS</CardDescription>
                     </CardHeader>
                     <CardContent className="p-0 flex-1">
                         <ScrollArea className="h-[200px]">
@@ -239,15 +462,17 @@ export default function DashboardPage() {
                     </CardContent>
                 </Card>
 
-                {/* Card 3: Analytics & Growth */}
-                <Card className="hover:border-google-blue/50 transition-all duration-300">
-                    <CardHeader className="flex flex-row items-center justify-between pb-2">
+                {/* Card 3: Analytics & Growth - Glass Layer */}
+                <Card className="border-none shadow-premium glass-card overflow-hidden transition-all hover:-translate-y-1 duration-300">
+                    <CardHeader className="flex flex-row items-center justify-between pb-3 border-b border-slate-100/50">
                         <Link href="/dashboard/analytics" className="space-y-1 hover:underline group">
-                            <CardTitle className="flex items-center space-x-2 text-base">
-                                <TrendingUp className="w-5 h-5 text-emerald-500 group-hover:text-google-blue transition-colors" />
-                                <span>Growth Trajectory</span>
+                            <CardTitle className="flex items-center space-x-2 font-black text-slate-800">
+                                <div className="size-8 rounded-xl bg-emerald-50 flex items-center justify-center">
+                                    <TrendingUp className="size-4 text-vibrant-emerald" />
+                                </div>
+                                <span className="uppercase tracking-widest text-xs">Growth Map</span>
                             </CardTitle>
-                            <CardDescription className="text-[11px]">Skill improvement over time</CardDescription>
+                            <CardDescription className="font-bold text-[10px] text-slate-400">SKILL TRAJECTORY</CardDescription>
                         </Link>
                         <TooltipProvider>
                             <Tooltip>
@@ -266,7 +491,7 @@ export default function DashboardPage() {
                         <Link href="/dashboard/analytics">
                             <div className="h-[140px] w-full mt-4 cursor-pointer">
                                 {chartData.length > 0 ? (
-                                    <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={100}>
                                         <AreaChart data={chartData}>
                                             <defs>
                                                 <linearGradient id="colorScore" x1="0" y1="0" x2="0" y2="1">
@@ -311,43 +536,35 @@ export default function DashboardPage() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {scheduledSessions.map((session) => (
-                            <Card key={session.id} className="border-l-4 border-l-emerald-500">
-                                <CardContent className="p-4">
-                                    <div className="flex items-start justify-between">
-                                        <div className="flex-1">
-                                            <h4 className="font-semibold text-base mb-1">{session.title}</h4>
-                                            <p className="text-xs text-slate-500 mb-3">{session.type}</p>
-                                            <div className="space-y-1">
-                                                <div className="flex items-center space-x-2 text-sm">
-                                                    <Calendar className="w-4 h-4 text-slate-400" />
-                                                    <span className="text-slate-600">
-                                                        {new Date(session.date).toLocaleDateString('en-US', {
-                                                            weekday: 'short',
-                                                            month: 'short',
-                                                            day: 'numeric'
-                                                        })}
-                                                    </span>
-                                                </div>
-                                                <div className="flex items-center space-x-2 text-sm">
-                                                    <Clock className="w-4 h-4 text-slate-400" />
-                                                    <span className="text-slate-600">{session.time}</span>
-                                                </div>
-                                                <div className="flex items-center space-x-2 text-xs text-slate-500 mt-2">
-                                                    <Badge variant="secondary" className="text-[10px]">{session.frequency}</Badge>
-                                                    <Badge variant="secondary" className="text-[10px]">{session.duration}</Badge>
+                            <Card key={session.id} className="border-none shadow-sm glass-card border-l-4 border-l-emerald-500 group">
+                                <CardContent className="p-3">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center space-x-3">
+                                            <div className="size-8 rounded-lg bg-emerald-50 flex items-center justify-center">
+                                                <Calendar className="size-4 text-emerald-600" />
+                                            </div>
+                                            <div>
+                                                <h4 className="font-bold text-xs text-slate-800">{session.title}</h4>
+                                                <div className="flex items-center space-x-2 text-[10px] text-slate-500 font-medium">
+                                                    <span>{new Date(session.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                                                    <span>•</span>
+                                                    <span>{session.time}</span>
                                                 </div>
                                             </div>
                                         </div>
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                                            onClick={() => {
-                                                setScheduledSessions(scheduledSessions.filter(s => s.id !== session.id));
-                                            }}
-                                        >
-                                            Cancel
-                                        </Button>
+                                        <div className="flex items-center gap-1">
+                                            <Badge variant="secondary" className="text-[9px] bg-slate-100 text-slate-600 border-none px-2">{session.duration}</Badge>
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                className="h-7 w-7 text-slate-300 hover:text-red-500 hover:bg-red-50"
+                                                onClick={() => {
+                                                    setScheduledSessions(scheduledSessions.filter(s => s.id !== session.id));
+                                                }}
+                                            >
+                                                <Plus className="w-3.5 h-3.5 rotate-45" />
+                                            </Button>
+                                        </div>
                                     </div>
                                 </CardContent>
                             </Card>
@@ -356,116 +573,69 @@ export default function DashboardPage() {
                 </section>
             )}
 
-            {/* Session History */}
-            {sessionHistory.length > 0 && (
-                <section className="space-y-4">
-                    <div className="flex items-center space-x-2">
-                        <History className="w-5 h-5 text-slate-600" />
-                        <h3 className="font-bold text-lg">Session History</h3>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        {sessionHistory.slice().reverse().map((session) => (
-                            <Card key={session.id} className={`border-l-4 ${session.status === 'Completed' ? 'border-l-emerald-500' : 'border-l-slate-300'}`}>
-                                <CardContent className="p-4">
-                                    <div className="space-y-2">
-                                        <div className="flex items-start justify-between">
-                                            <h4 className="font-semibold text-sm">{session.title}</h4>
-                                            <Badge
-                                                variant={session.status === 'Completed' ? 'default' : 'secondary'}
-                                                className={session.status === 'Completed' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}
-                                            >
-                                                {session.status}
-                                            </Badge>
-                                        </div>
-                                        <p className="text-xs text-slate-500">{session.type}</p>
-                                        <div className="flex items-center space-x-2 text-xs text-slate-600">
-                                            <Calendar className="w-3 h-3" />
-                                            <span>
-                                                {new Date(session.date).toLocaleDateString('en-US', {
-                                                    month: 'short',
-                                                    day: 'numeric'
-                                                })}
-                                            </span>
-                                            <Clock className="w-3 h-3 ml-2" />
-                                            <span>{session.time}</span>
-                                        </div>
-                                    </div>
-                                </CardContent>
-                            </Card>
-                        ))}
-                    </div>
-                </section>
-            )}
 
 
 
             {/* AI Recommendations */}
             <section className="space-y-4">
-                <div className="flex items-center space-x-2">
-                    <Sparkles className="w-5 h-5 text-google-blue" />
-                    <h3 className="font-bold text-lg">AI Recommendations</h3>
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                        <Sparkles className="w-5 h-5 text-google-blue" />
+                        <h3 className="font-bold text-lg">Next Steps for You</h3>
+                    </div>
                 </div>
-                <div className="space-y-4">
-                    {/* Recommendation 1: Increase Technical Frequency */}
-                    <Card className="border-l-4 border-l-google-blue hover:shadow-md transition-shadow">
-                        <CardContent className="p-6">
-                            <div className="flex items-start justify-between">
-                                <div className="flex-1">
-                                    <h4 className="font-semibold text-base mb-2">Increase Technical Frequency</h4>
-                                    <p className="text-sm text-slate-600 mb-4">
-                                        Based on your recent scores, increasing tech rounds by 2 sessions/week will optimize your Google interview readiness.
-                                    </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Compact Recommendation 1 */}
+                    <Card className="border-none shadow-premium glass-card border-l-4 border-l-vibrant-purple hover:-translate-y-1 transition-all group">
+                        <CardContent className="p-4 space-y-3">
+                            <div className="flex justify-between items-start">
+                                <div className="space-y-1">
+                                    <h4 className="font-black text-sm text-slate-800 uppercase tracking-tight">Optimize Complexity Logic</h4>
+                                    <p className="text-[11px] text-slate-500 font-medium">Refine "Big O" verbal delivery for {targetCompany}.</p>
                                 </div>
-                                <Button
-                                    variant="outline"
-                                    className="ml-4 border-google-blue text-google-blue hover:bg-google-blue hover:text-white"
-                                    onClick={() => {
-                                        setSelectedRecommendation({
-                                            title: "Increase Technical Frequency",
-                                            type: "Technical Practice",
-                                            sessions: "2 sessions/week",
-                                            duration: "45 mins each"
-                                        });
-                                        setIsScheduleOpen(true);
-                                    }}
-                                >
-                                    Schedule
+                                <div className="text-right">
+                                    <span className="text-xl font-black text-vibrant-purple">+12%</span>
+                                    <p className="text-[8px] text-slate-400 font-bold uppercase">Impact</p>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-3 text-[10px] text-slate-400 font-bold">
+                                <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> 20m</span>
+                                <span className="flex items-center gap-1"><Zap className="w-3 h-3" /> 2x/wk</span>
+                                <span className="text-google-blue bg-blue-50 px-2 py-0.5 rounded-full">Technical</span>
+                            </div>
+                            <div className="flex gap-2">
+                                <Button className="flex-1 bg-google-blue hover:bg-google-blue/90 text-white font-bold h-8 text-[10px]" asChild>
+                                    <Link href={`/dashboard/interview?company=${encodeURIComponent(targetCompany)}&role=${encodeURIComponent(targetRole)}&module=technical`}>
+                                        START
+                                    </Link>
                                 </Button>
+                                <Button variant="outline" className="flex-1 border-slate-200 text-slate-700 h-8 text-[10px] font-bold" onClick={() => setIsScheduleOpen(true)}>SCHEDULE</Button>
                             </div>
                         </CardContent>
                     </Card>
 
-                    {/* Recommendation 2: Communication Polish */}
-                    <Card className="border-l-4 border-l-purple-500 hover:shadow-md transition-shadow">
-                        <CardContent className="p-6">
-                            <div className="flex items-start justify-between">
-                                <div className="flex-1">
-                                    <h4 className="font-semibold text-base mb-2">Communication Polish</h4>
-                                    <p className="text-sm text-slate-600 mb-4">
-                                        Try our new 'Active Listening' module to improve your behavioral interview score.
-                                    </p>
+                    {/* Compact Recommendation 2 */}
+                    <Card className="border-none shadow-premium glass-card border-l-4 border-l-vibrant-pink hover:-translate-y-1 transition-all group">
+                        <CardContent className="p-4 space-y-3">
+                            <div className="flex justify-between items-start">
+                                <div className="space-y-1">
+                                    <h4 className="font-black text-sm text-slate-800 uppercase tracking-tight">Active STAR Precision</h4>
+                                    <p className="text-[11px] text-slate-500 font-medium">Master reflective listening for behavioral rounds.</p>
                                 </div>
-                                <Button
-                                    variant="outline"
-                                    className="ml-4 border-purple-500 text-purple-600 hover:bg-purple-500 hover:text-white"
-                                    onClick={() => {
-                                        setSelectedRecommendation({
-                                            title: "Active Listening Module",
-                                            description: "Master the art of active listening to excel in behavioral interviews",
-                                            lessons: [
-                                                "Understanding Non-Verbal Cues",
-                                                "Reflective Listening Techniques",
-                                                "STAR Method Integration",
-                                                "Practice Scenarios"
-                                            ],
-                                            duration: "2 hours",
-                                            level: "Intermediate"
-                                        });
-                                        setIsModuleOpen(true);
-                                    }}
-                                >
-                                    View Module
-                                </Button>
+                                <div className="text-right">
+                                    <span className="text-xl font-black text-vibrant-pink">+15%</span>
+                                    <p className="text-[8px] text-slate-400 font-bold uppercase">Impact</p>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-3 text-[10px] text-slate-400 font-bold">
+                                <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> 15m</span>
+                                <span className="flex items-center gap-1"><Zap className="w-3 h-3" /> Daily</span>
+                                <span className="text-purple-600 bg-purple-50 px-2 py-0.5 rounded-full">Soft Skills</span>
+                            </div>
+                            <div className="flex gap-2">
+                                <Button className="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-bold h-8 text-[10px]" onClick={() => setIsModuleOpen(true)}>LAUNCH</Button>
+                                <Button variant="outline" className="flex-1 border-slate-200 text-slate-700 h-8 text-[10px] font-bold" onClick={() => { }}>SAVED</Button>
                             </div>
                         </CardContent>
                     </Card>
@@ -563,11 +733,10 @@ export default function DashboardPage() {
                     </div>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setIsModuleOpen(false)}>Close</Button>
-                        <Button className="bg-purple-600 hover:bg-purple-700" onClick={() => {
-                            setIsModuleOpen(false);
-                            // Here you would navigate to the module
-                        }}>
-                            Start Module
+                        <Button className="bg-purple-600 hover:bg-purple-700" asChild>
+                            <Link href={`/dashboard/interview?company=${encodeURIComponent(targetCompany)}&role=${encodeURIComponent(targetRole)}&module=soft_skills`}>
+                                Start Module
+                            </Link>
                         </Button>
                     </DialogFooter>
                 </DialogContent>

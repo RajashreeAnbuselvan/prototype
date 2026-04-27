@@ -10,23 +10,133 @@ import { ChevronLeft, ChevronRight, Mic, Video, Settings, Info, CheckCircle2, Vi
 import Link from "next/link";
 import { getQuestions, Question } from "@/lib/interview-data";
 import { cn } from "@/lib/utils";
+import { getGeminiFeedback, generateInterviewQuestions } from "@/lib/gemini";
 
 function InterviewContent() {
     const searchParams = useSearchParams();
     const company = searchParams.get("company") || "Google";
     const role = searchParams.get("role") || "Software Engineer (L3)";
     const academicYear = searchParams.get("year") || "Junior (Year 3)";
+    const experience = searchParams.get("exp") || "";
+    const moduleType = searchParams.get("module") as "soft_skills" | "technical" | null;
 
     const [questions, setQuestions] = useState<Question[]>([]);
+    const [isLoadingQuestions, setIsLoadingQuestions] = useState(true);
     const [currentStep, setCurrentStep] = useState(0);
     const [completed, setCompleted] = useState(false);
     const [isRecording, setIsRecording] = useState(false);
     const [transcript, setTranscript] = useState("");
     const [isVideoOn, setIsVideoOn] = useState(false);
+    const videoRef = React.useRef<HTMLVideoElement>(null);
+    const streamRef = React.useRef<MediaStream | null>(null);
+
+    // Track responses and feedback for DB
+    const [allResponses, setAllResponses] = useState<string[]>([]);
+    const [allFeedbacks, setAllFeedbacks] = useState<string[]>([]);
+    const [allScores, setAllScores] = useState<number[]>([]);
+
+    // Camera logic
+    useEffect(() => {
+        let isCancelled = false;
+        
+        const startCamera = async () => {
+            if (isVideoOn) {
+                try {
+                    console.log("Attempting to start camera...");
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        video: { width: { ideal: 1280 }, height: { ideal: 720 } }, 
+                        audio: false 
+                    });
+                    
+                    if (isCancelled) {
+                        stream.getTracks().forEach(t => t.stop());
+                        return;
+                    }
+
+                    if (videoRef.current) {
+                        videoRef.current.srcObject = stream;
+                        // Add explicit play for strict browsers
+                        try {
+                            await videoRef.current.play();
+                        } catch (pErr) {
+                            console.warn("Video play interrupted or blocked:", pErr);
+                        }
+                    }
+                    streamRef.current = stream;
+                } catch (err) {
+                    console.error("Error accessing camera:", err);
+                    setIsVideoOn(false);
+                }
+            } else {
+                if (streamRef.current) {
+                    streamRef.current.getTracks().forEach(track => track.stop());
+                    streamRef.current = null;
+                }
+                if (videoRef.current) {
+                    videoRef.current.srcObject = null;
+                }
+            }
+        };
+
+        startCamera();
+
+        return () => {
+            isCancelled = true;
+            if (streamRef.current) {
+                streamRef.current.getTracks().forEach(track => track.stop());
+                streamRef.current = null;
+            }
+        };
+    }, [isVideoOn]);
+
+    // Fetch dynamic questions
+    useEffect(() => {
+        const fetchQs = async () => {
+            setIsLoadingQuestions(true);
+            try {
+                const dynamicQs = await generateInterviewQuestions(
+                    company,
+                    role,
+                    academicYear,
+                    experience,
+                    moduleType || undefined
+                );
+                if (dynamicQs && dynamicQs.length > 0) {
+                    setQuestions(dynamicQs);
+                } else {
+                    // Fallback to static data
+                    setQuestions(getQuestions(company));
+                }
+            } catch (error) {
+                console.error("Failed to load questions:", error);
+                setQuestions(getQuestions(company));
+            } finally {
+                setIsLoadingQuestions(false);
+            }
+        };
+        fetchQs();
+    }, [company, role, academicYear, moduleType]);
+
+    // Helper to capture a frame from the video
+    const captureFrame = (): string | null => {
+        if (videoRef.current && isVideoOn) {
+            const canvas = document.createElement("canvas");
+            canvas.width = videoRef.current.videoWidth;
+            canvas.height = videoRef.current.videoHeight;
+            const ctx = canvas.getContext("2d");
+            if (ctx) {
+                ctx.scale(-1, 1); // Mirror
+                ctx.drawImage(videoRef.current, -canvas.width, 0, canvas.width, canvas.height);
+                return canvas.toDataURL("image/jpeg", 0.8).split(",")[1]; // Return base64 without prefix
+            }
+        }
+        return null;
+    };
 
     // New states for real AI feedback loop
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [aiFeedback, setAiFeedback] = useState("");
+    const [bodyLanguageFeedback, setBodyLanguageFeedback] = useState("");
     const [isAISpeaking, setIsAISpeaking] = useState(false);
     const [recognition, setRecognition] = useState<any>(null);
     const recognitionRef = React.useRef<any>(null);
@@ -139,62 +249,51 @@ function InterviewContent() {
     }, [isRecording]);
 
     const handleEvaluation = async () => {
+        if (!transcript || transcript.length < 5) return;
+
         setIsAnalyzing(true);
-        // Simulate Gemini thinking/analysis
-        setTimeout(() => {
-            let feedback = "";
-            const isNetflix = company.toLowerCase() === "netflix";
-            const academicLevel = academicYear.toLowerCase();
-            const isFreshmanOrSophomore = academicLevel.includes("freshman") || academicLevel.includes("sophomore");
-            const isGraduate = academicLevel.includes("graduate");
+        setAiFeedback("");
+        setBodyLanguageFeedback("");
+        
+        // Capture frame for body language analysis
+        const frame = captureFrame();
 
-            if (isNetflix) {
-                const currentQuestionText = questions[currentStep].text.toLowerCase();
-                let rubricTitle = "";
-                let rubricText = "";
+        try {
+            const data = await getGeminiFeedback(
+                questions[currentStep].text,
+                transcript,
+                company,
+                role,
+                academicYear,
+                experience,
+                frame || undefined,
+                questions[currentStep].hint // Pass hint as expectedContext
+            );
 
-                // Map questions to rubrics based on keywords
-                if (currentQuestionText.includes("data") || currentQuestionText.includes("intuition") || currentQuestionText.includes("judgment")) {
-                    rubricTitle = "Judgment";
-                    rubricText = isFreshmanOrSophomore
-                        ? "You're showing a great early understanding of how data informs creative decisions. Focus on explaining 'the why' behind your intuition to show long-term thinking."
-                        : isGraduate
-                            ? "A sophisticated balance of quantitative metrics and creative vision. Your ability to think 3-5 years ahead in content cycles perfectly matches our 'Judgment' standard."
-                            : "Strong data-informed logic. To level up, demonstrate how your intuition would challenge a data trend if the long-term strategic value was high.";
-                } else if (currentQuestionText.includes("feedback") || currentQuestionText.includes("candor")) {
-                    rubricTitle = "Radical Candor";
-                    rubricText = isFreshmanOrSophomore
-                        ? "Good start. At Netflix, we practice 'Radical Candor'—which means being direct because you care. Try to be even more specific with your feedback examples."
-                        : "Excellent application of 'Radical Candor'. You balanced personal care with direct challenge effectively, ensuring high stakes didn't lower your honesty.";
-                } else if (currentQuestionText.includes("context") || currentQuestionText.includes("control") || currentQuestionText.includes("strategy")) {
-                    rubricTitle = "Context, Not Control";
-                    rubricText = isGraduate
-                        ? "Masterful approach to strategic empowerment. You prioritize information flow over approval loops, which is exactly how we scale Content Strategy."
-                        : "You clearly grasped the concept of empowering others with context. Focus on what specific 'levers' or data you'd provide to creative partners.";
-                } else {
-                    rubricTitle = "High Performance";
-                    rubricText = "Your answer reflects a 'Dream Team' mentality—prioritizing excellence and team success over individual ego. This is core to our performance culture.";
-                }
-
-                feedback = `[Netflix Rubric: ${rubricTitle}] ${rubricText}`;
-
-                if (isFreshmanOrSophomore) {
-                    feedback += " This is a highly mature response for an early-career candidate.";
-                }
-            } else {
-                const feedbacks = [
-                    "That's a very solid approach. You clearly identified the trade-offs between latency and consistency. I'd suggest elaborating more on the failure modes in a distributed environment.",
-                    "Excellent use of technical terminology. Your explanation of the MapReduce paradigm was intuitive. Try to keep the same energetic tone for the system design section.",
-                    "Good response. You highlighted the importance of user-centric design. For the candidate level, this shows great maturity.",
-                    "Very methodical. The way you broke down the problem into smaller modules shows strong engineering discipline. Your voice tone remained professional throughout."
-                ];
-                feedback = feedbacks[Math.floor(Math.random() * feedbacks.length)];
-            }
+            const feedback = data.feedback || "I've analyzed your answer. Good effort!";
+            const blFeedback = data.bodyLanguage || "Maintain good posture and eye contact.";
+            const score = data.score || 70;
 
             setAiFeedback(feedback);
+            setBodyLanguageFeedback(blFeedback);
+            
+            setAllFeedbacks(prev => {
+                const updated = [...prev];
+                updated[currentStep] = feedback + " | Body Language: " + blFeedback;
+                return updated;
+            });
+            setAllScores(prev => {
+                const updated = [...prev];
+                updated[currentStep] = Math.round((score + (data.bodyLanguageScore || score)) / 2);
+                return updated;
+            });
             setIsAnalyzing(false);
             speakFeedback(feedback);
-        }, 2000);
+        } catch (error) {
+            console.error("Evaluation failed:", error);
+            setIsAnalyzing(false);
+            setAiFeedback("Sorry, I couldn't analyze that right now. Let's try the next one!");
+        }
     };
 
     const speakFeedback = (text: string) => {
@@ -218,53 +317,91 @@ function InterviewContent() {
         }
     };
 
-    const handleNext = () => {
+    const handleNext = async () => {
+        // Save current transcript
+        const currentTranscript = transcript;
+        setAllResponses(prev => {
+            const updated = [...prev];
+            updated[currentStep] = currentTranscript;
+            return updated;
+        });
+
         if (currentStep < questions.length - 1) {
-            setCurrentStep(currentStep + 1);
+            const nextStep = currentStep + 1;
+            setCurrentStep(nextStep);
             setIsRecording(false);
-            setTranscript("");
-            setAiFeedback("");
+            // Restore previous state if it exists
+            setTranscript(allResponses[nextStep] || "");
+            setAiFeedback(allFeedbacks[nextStep] || "");
             if (typeof window !== "undefined") window.speechSynthesis.cancel();
         } else {
             setCompleted(true);
-            // Save to persistent history
-            if (typeof window !== "undefined") {
-                const newHistoryItem = {
-                    id: Date.now(),
-                    company,
-                    role,
-                    date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-                    status: "Completed",
-                    score: 94, // Using the same score from the summary for consistency
-                    type: company === "Netflix" && role.includes("Content Strategy") ? "Behavioral" : "Technical"
-                };
 
-                const saved = localStorage.getItem('prepBuddy_interviewHistory');
-                let history = [];
-                if (saved) {
-                    try {
-                        history = JSON.parse(saved);
-                    } catch (e) {
-                        console.error("Error parsing history", e);
+            // Prepare data for DB
+            const finalResponses = [...allResponses];
+            finalResponses[currentStep] = currentTranscript;
+
+            const interviewData = {
+                company,
+                role,
+                date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                status: "Completed",
+                score: allScores.length > 0 ? Math.round(allScores.reduce((a, b) => a + b, 0) / allScores.length) : 85,
+                type: company === "Netflix" && role.includes("Content Strategy") ? "Behavioral" : "Technical",
+                questions: questions,
+                responses: finalResponses,
+                feedbacks: allFeedbacks
+            };
+
+            // Save to MongoDB
+            try {
+                const response = await fetch('/api/interviews', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(interviewData),
+                });
+                if (!response.ok) throw new Error('Failed to save interview');
+                console.log("Interview saved to MongoDB");
+            } catch (error) {
+                console.error("Error saving to MongoDB:", error);
+                // Fallback to localStorage if API fails
+                if (typeof window !== "undefined") {
+                    const saved = localStorage.getItem('prepBuddy_interviewHistory');
+                    let history = [];
+                    if (saved) {
+                        try {
+                            history = JSON.parse(saved);
+                        } catch (e) { }
                     }
+                    history.unshift({ ...interviewData, id: Date.now() });
+                    localStorage.setItem('prepBuddy_interviewHistory', JSON.stringify(history));
                 }
-                history.unshift(newHistoryItem);
-                localStorage.setItem('prepBuddy_interviewHistory', JSON.stringify(history));
             }
         }
     };
 
     const handleBack = () => {
         if (currentStep > 0) {
-            setCurrentStep(currentStep - 1);
+            const prevStep = currentStep - 1;
+            setCurrentStep(prevStep);
             setIsRecording(false);
-            setTranscript("");
-            setAiFeedback("");
+            // Restore state
+            setTranscript(allResponses[prevStep] || "");
+            setAiFeedback(allFeedbacks[prevStep] || "");
             if (typeof window !== "undefined") window.speechSynthesis.cancel();
         }
     };
 
     if (questions.length === 0) return <div className="p-20 text-center">Loading PrepBuddy Interview...</div>;
+
+    if (isLoadingQuestions) {
+        return (
+            <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
+                <div className="w-12 h-12 border-4 border-google-blue border-t-transparent rounded-full animate-spin"></div>
+                <p className="text-slate-400 animate-pulse">Preparing your custom interview questions...</p>
+            </div>
+        );
+    }
 
     if (completed) {
         return (
@@ -358,10 +495,20 @@ function InterviewContent() {
                         isVideoOn ? "bg-slate-800" : "bg-slate-900",
                         isAISpeaking && "ring-4 ring-google-blue/30 scale-[1.02]"
                     )}>
-                        <div className={cn(
-                            "absolute inset-0 bg-[url('https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=688&auto=format&fit=crop')] bg-cover bg-center transition-all duration-700",
-                            isVideoOn ? "opacity-100 grayscale-0 blur-0" : "opacity-40 grayscale blur-[2px]"
-                        )} />
+                        {isVideoOn ? (
+                            <video
+                                ref={videoRef}
+                                autoPlay
+                                playsInline
+                                muted
+                                className="absolute inset-0 w-full h-full object-cover scale-x-[-1]"
+                            />
+                        ) : (
+                            <div className={cn(
+                                "absolute inset-0 bg-[url('https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=688&auto=format&fit=crop')] bg-cover bg-center transition-all duration-700",
+                                "opacity-40 grayscale blur-[2px]"
+                            )} />
+                        )}
 
                         {!isVideoOn && !isAISpeaking && (
                             <div className="relative z-10 flex flex-col items-center">
@@ -488,15 +635,35 @@ function InterviewContent() {
                                     </div>
                                 ) : aiFeedback ? (
                                     <div className="w-full space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
-                                        <div className="bg-white p-4 rounded-xl border border-google-blue/20 shadow-sm relative">
-                                            <div className="absolute -top-3 right-4 px-2 py-0.5 bg-google-blue text-white text-[10px] font-bold rounded-full">AI FEEDBACK</div>
-                                            <p className="text-sm text-slate-700 leading-relaxed italic">
-                                                "{aiFeedback}"
-                                            </p>
+                                        <div className="space-y-3">
+                                            <div className="bg-white p-4 rounded-xl border border-google-blue/20 shadow-sm relative">
+                                                <div className="absolute -top-3 right-4 px-2 py-0.5 bg-google-blue text-white text-[10px] font-bold rounded-full uppercase">Response</div>
+                                                <p className="text-sm text-slate-700 leading-relaxed italic">
+                                                    "{aiFeedback}"
+                                                </p>
+                                            </div>
+
+                                            {bodyLanguageFeedback && (
+                                                <div className="bg-emerald-50/50 p-4 rounded-xl border border-emerald-100 shadow-sm relative">
+                                                    <div className="absolute -top-3 right-4 px-2 py-0.5 bg-emerald-600 text-white text-[10px] font-bold rounded-full uppercase flex items-center gap-1">
+                                                        <Sparkles className="w-2.5 h-2.5" /> Body Language
+                                                    </div>
+                                                    <p className="text-sm text-slate-700 leading-relaxed italic">
+                                                        "{bodyLanguageFeedback}"
+                                                    </p>
+                                                </div>
+                                            )}
                                         </div>
-                                        <div className="flex space-x-2">
-                                            <Button variant="outline" className="flex-1 text-xs" onClick={() => speakFeedback(aiFeedback)}>
-                                                Replay Voice
+
+                                        <div className="flex space-x-2 pt-2">
+                                            <Button variant="outline" className="flex-1 text-xs" onClick={() => {
+                                                if (aiFeedback.includes("error")) {
+                                                    handleEvaluation();
+                                                } else {
+                                                    speakFeedback(aiFeedback);
+                                                }
+                                            }}>
+                                                {aiFeedback.includes("error") ? "Try Again" : "Replay Voice"}
                                             </Button>
                                             <Button className="flex-[2] bg-slate-900" onClick={handleNext}>
                                                 Next Question <ChevronRight className="w-4 h-4 ml-2" />
