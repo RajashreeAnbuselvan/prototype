@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { ChevronLeft, ChevronRight, Mic, Video, Settings, Info, CheckCircle2, VideoOff, MicOff, Sparkles } from "lucide-react";
+import { ChevronLeft, ChevronRight, Mic, Video, Settings, CheckCircle2, VideoOff, MicOff, Sparkles, RefreshCw, AlertCircle } from "lucide-react";
 import Link from "next/link";
 import { getQuestions, Question } from "@/lib/interview-data";
 import { cn } from "@/lib/utils";
@@ -26,7 +26,10 @@ function InterviewContent() {
     const [completed, setCompleted] = useState(false);
     const [isRecording, setIsRecording] = useState(false);
     const [transcript, setTranscript] = useState("");
-    const [isVideoOn, setIsVideoOn] = useState(false);
+    const [isVideoOn, setIsVideoOn] = useState(true);
+    const [isCameraLoading, setIsCameraLoading] = useState(false);
+    const [cameraError, setCameraError] = useState<string | null>(null);
+    const [stream, setStream] = useState<MediaStream | null>(null);
     const videoRef = React.useRef<HTMLVideoElement>(null);
     const streamRef = React.useRef<MediaStream | null>(null);
 
@@ -35,59 +38,135 @@ function InterviewContent() {
     const [allFeedbacks, setAllFeedbacks] = useState<string[]>([]);
     const [allScores, setAllScores] = useState<number[]>([]);
 
-    // Camera logic
-    useEffect(() => {
-        let isCancelled = false;
-        
-        const startCamera = async () => {
-            if (isVideoOn) {
-                try {
-                    console.log("Attempting to start camera...");
-                    const stream = await navigator.mediaDevices.getUserMedia({ 
-                        video: { width: { ideal: 1280 }, height: { ideal: 720 } }, 
-                        audio: false 
-                    });
-                    
-                    if (isCancelled) {
-                        stream.getTracks().forEach(t => t.stop());
-                        return;
-                    }
+    // Camera control functions
+    const startCamera = React.useCallback(async () => {
+        setIsCameraLoading(true);
+        setCameraError(null);
 
-                    if (videoRef.current) {
-                        videoRef.current.srcObject = stream;
-                        // Add explicit play for strict browsers
-                        try {
-                            await videoRef.current.play();
-                        } catch (pErr) {
-                            console.warn("Video play interrupted or blocked:", pErr);
-                        }
-                    }
-                    streamRef.current = stream;
-                } catch (err) {
-                    console.error("Error accessing camera:", err);
-                    setIsVideoOn(false);
-                }
-            } else {
-                if (streamRef.current) {
-                    streamRef.current.getTracks().forEach(track => track.stop());
-                    streamRef.current = null;
-                }
-                if (videoRef.current) {
-                    videoRef.current.srcObject = null;
+        if (typeof window === "undefined" || !navigator?.mediaDevices?.getUserMedia) {
+            setCameraError("Camera access is not supported by your browser or environment. Please ensure you are running on localhost or HTTPS.");
+            setIsCameraLoading(false);
+            setIsVideoOn(false);
+            return;
+        }
+
+        try {
+            console.log("Attempting to start camera...");
+            let newStream: MediaStream;
+            try {
+                // Try ideal resolution first
+                newStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: 1280, max: 1920 },
+                        height: { ideal: 720, max: 1080 },
+                        facingMode: "user"
+                    },
+                    audio: false
+                });
+            } catch (constraintErr) {
+                console.warn("Retrying camera with generic constraints...", constraintErr);
+                // Fallback to basic video constraint for webcams with strict requirements
+                newStream = await navigator.mediaDevices.getUserMedia({
+                    video: true,
+                    audio: false
+                });
+            }
+
+            // Stop existing tracks if any before attaching new stream
+            if (streamRef.current) {
+                streamRef.current.getTracks().forEach(t => t.stop());
+            }
+
+            streamRef.current = newStream;
+            setStream(newStream);
+            setIsVideoOn(true);
+            setCameraError(null);
+
+            if (videoRef.current) {
+                videoRef.current.muted = true;
+                videoRef.current.srcObject = newStream;
+                try {
+                    await videoRef.current.play();
+                } catch (pErr) {
+                    console.warn("Video play interrupted or blocked:", pErr);
                 }
             }
-        };
-
-        startCamera();
-
-        return () => {
-            isCancelled = true;
+        } catch (err: any) {
+            console.error("Error accessing camera:", err);
+            let msg = "Could not access camera.";
+            if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+                msg = "Camera permission was denied. Please allow camera permissions in your browser.";
+            } else if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError") {
+                msg = "No camera found on this device. Please connect a webcam.";
+            } else if (err.name === "NotReadableError" || err.name === "TrackStartError") {
+                msg = "Camera is currently in use by another application or tab.";
+            } else if (err.name === "OverconstrainedError") {
+                msg = "Camera resolution constraints could not be satisfied by your video device.";
+            } else if (err.message) {
+                msg = `Camera error: ${err.message}`;
+            }
+            setCameraError(msg);
+            setIsVideoOn(false);
+            setStream(null);
             if (streamRef.current) {
-                streamRef.current.getTracks().forEach(track => track.stop());
+                streamRef.current.getTracks().forEach(t => t.stop());
+                streamRef.current = null;
+            }
+        } finally {
+            setIsCameraLoading(false);
+        }
+    }, []);
+
+    const stopCamera = React.useCallback(() => {
+        if (streamRef.current) {
+            streamRef.current.getTracks().forEach(track => track.stop());
+            streamRef.current = null;
+        }
+        setStream(null);
+        setIsVideoOn(false);
+        if (videoRef.current) {
+            videoRef.current.srcObject = null;
+        }
+    }, []);
+
+    const toggleCamera = React.useCallback(() => {
+        if (isVideoOn && streamRef.current) {
+            stopCamera();
+        } else {
+            startCamera();
+        }
+    }, [isVideoOn, startCamera, stopCamera]);
+
+    // Initial camera startup
+    useEffect(() => {
+        startCamera();
+        return () => {
+            if (streamRef.current) {
+                streamRef.current.getTracks().forEach(t => t.stop());
                 streamRef.current = null;
             }
         };
-    }, [isVideoOn]);
+    }, [startCamera]);
+
+    // Ensure video srcObject is continuously synced whenever video element mounts or stream updates
+    useEffect(() => {
+        if (videoRef.current && stream && isVideoOn) {
+            videoRef.current.muted = true;
+            if (videoRef.current.srcObject !== stream) {
+                videoRef.current.srcObject = stream;
+            }
+            videoRef.current.play().catch(pErr => {
+                console.warn("Video auto-play warning:", pErr);
+            });
+        }
+    }, [stream, isVideoOn, isLoadingQuestions]);
+
+    // Stop camera when interview completes
+    useEffect(() => {
+        if (completed) {
+            stopCamera();
+        }
+    }, [completed, stopCamera]);
 
     // Fetch dynamic questions
     useEffect(() => {
@@ -119,15 +198,20 @@ function InterviewContent() {
 
     // Helper to capture a frame from the video
     const captureFrame = (): string | null => {
-        if (videoRef.current && isVideoOn) {
-            const canvas = document.createElement("canvas");
-            canvas.width = videoRef.current.videoWidth;
-            canvas.height = videoRef.current.videoHeight;
-            const ctx = canvas.getContext("2d");
-            if (ctx) {
-                ctx.scale(-1, 1); // Mirror
-                ctx.drawImage(videoRef.current, -canvas.width, 0, canvas.width, canvas.height);
-                return canvas.toDataURL("image/jpeg", 0.8).split(",")[1]; // Return base64 without prefix
+        const video = videoRef.current;
+        if (video && isVideoOn && video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
+            try {
+                const canvas = document.createElement("canvas");
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                const ctx = canvas.getContext("2d");
+                if (ctx) {
+                    ctx.scale(-1, 1); // Mirror
+                    ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+                    return canvas.toDataURL("image/jpeg", 0.8).split(",")[1]; // Return base64 without prefix
+                }
+            } catch (err) {
+                console.warn("Error capturing camera frame:", err);
             }
         }
         return null;
@@ -495,22 +579,39 @@ function InterviewContent() {
                         isVideoOn ? "bg-slate-800" : "bg-slate-900",
                         isAISpeaking && "ring-4 ring-google-blue/30 scale-[1.02]"
                     )}>
-                        {isVideoOn ? (
-                            <video
-                                ref={videoRef}
-                                autoPlay
-                                playsInline
-                                muted
-                                className="absolute inset-0 w-full h-full object-cover scale-x-[-1]"
-                            />
-                        ) : (
+                        {/* Video Element - continuously mounted to preserve ref and hardware stream binding */}
+                        <video
+                            ref={videoRef}
+                            autoPlay
+                            playsInline
+                            muted
+                            onLoadedMetadata={(e) => {
+                                const v = e.currentTarget;
+                                v.muted = true;
+                                v.play().catch(pErr => console.warn("Video auto-play onLoadedMetadata warning:", pErr));
+                            }}
+                            className={cn(
+                                "absolute inset-0 w-full h-full object-cover scale-x-[-1] transition-opacity duration-300",
+                                isVideoOn && stream ? "opacity-100 z-10" : "opacity-0 pointer-events-none"
+                            )}
+                        />
+
+                        {/* Background placeholder when camera is not actively streaming */}
+                        {(!isVideoOn || !stream) && (
                             <div className={cn(
                                 "absolute inset-0 bg-[url('https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=688&auto=format&fit=crop')] bg-cover bg-center transition-all duration-700",
                                 "opacity-40 grayscale blur-[2px]"
                             )} />
                         )}
 
-                        {!isVideoOn && !isAISpeaking && (
+                        {isCameraLoading && (
+                            <div className="relative z-20 flex flex-col items-center gap-2 p-4 text-center">
+                                <RefreshCw className="w-8 h-8 text-google-blue animate-spin" />
+                                <p className="text-white text-xs font-semibold">Connecting camera...</p>
+                            </div>
+                        )}
+
+                        {!isVideoOn && !isCameraLoading && !isAISpeaking && (
                             <div className="relative z-10 flex flex-col items-center">
                                 <VideoOff className="w-12 h-12 text-white/30 mb-2" />
                                 <p className="text-white/50 text-[10px] font-medium tracking-wider uppercase">Camera Off</p>
@@ -535,22 +636,47 @@ function InterviewContent() {
                             </div>
                         )}
 
-                        <div className="absolute bottom-4 left-4 flex items-center space-x-2 bg-black/40 backdrop-blur-md px-2 py-1 rounded-full z-30">
-                            <div className={cn("w-2 h-2 rounded-full", isRecording ? "bg-red-500 animate-pulse" : "bg-slate-400")} />
+                        <div className="absolute bottom-4 left-4 flex items-center space-x-2 bg-black/50 backdrop-blur-md px-2.5 py-1 rounded-full z-30">
+                            <div className={cn(
+                                "w-2 h-2 rounded-full",
+                                isRecording ? "bg-red-500 animate-pulse" : (isVideoOn && stream) ? "bg-emerald-500" : "bg-slate-400"
+                            )} />
                             <span className="text-[10px] text-white/90 font-bold uppercase tracking-widest">
-                                {isRecording ? "Live STT Recording" : isAnalyzing ? "Evaluating..." : "Ready"}
+                                {isRecording ? "Live STT Recording" : isAnalyzing ? "Evaluating..." : (isVideoOn && stream) ? "Camera Active" : "Ready"}
                             </span>
                         </div>
                     </div>
 
+                    {cameraError && (
+                        <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 space-y-2">
+                            <div className="flex items-center gap-1.5 font-semibold text-red-800">
+                                <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                                <span>Camera Access Required</span>
+                            </div>
+                            <p className="text-[11px] leading-relaxed text-red-600">{cameraError}</p>
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                className="w-full h-7 text-xs bg-white border-red-300 text-red-700 hover:bg-red-100 font-semibold"
+                                onClick={startCamera}
+                            >
+                                <RefreshCw className="w-3 h-3 mr-1" /> Grant Permission / Retry
+                            </Button>
+                        </div>
+                    )}
+
                     <div className="flex gap-2">
                         <Button
-                            variant={isVideoOn ? "outline" : "default"}
-                            className={cn("flex-1 h-10", isVideoOn && "border-google-blue text-google-blue")}
-                            onClick={() => setIsVideoOn(!isVideoOn)}
+                            variant={isVideoOn && stream ? "outline" : "default"}
+                            className={cn(
+                                "flex-1 h-10",
+                                isVideoOn && stream && "border-google-blue text-google-blue hover:bg-google-blue/10"
+                            )}
+                            onClick={toggleCamera}
+                            disabled={isCameraLoading}
                         >
-                            {isVideoOn ? <Video className="w-4 h-4 mr-2" /> : <VideoOff className="w-4 h-4 mr-2" />}
-                            Video
+                            {isVideoOn && stream ? <Video className="w-4 h-4 mr-2 text-google-blue" /> : <VideoOff className="w-4 h-4 mr-2" />}
+                            {isCameraLoading ? "Starting..." : isVideoOn && stream ? "Video On" : "Turn On Video"}
                         </Button>
                         <Button
                             variant={isRecording ? "outline" : "default"}
